@@ -1,12 +1,13 @@
 package org.ethereum.core;
 
-import java.math.BigInteger;
-
 import org.ethereum.crypto.HashUtil;
+import org.ethereum.manager.WorldManager;
 import org.ethereum.util.RLP;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.spongycastle.util.encoders.Hex;
+
+import java.math.BigInteger;
 
 /**
  * The genesis block is the first block in the chain and has fixed values according to 
@@ -38,11 +39,7 @@ public class Genesis extends Block {
             "1a26338f0d905e295fccb71fa9ea849ffa12aaf4",		// # (A)
     };
 
-	Logger logger = LoggerFactory.getLogger(this.getClass());
-    // The proof-of-concept series include a development premine, making the state root hash
-	// some value stateRoot. The latest documentation should be consulted for the value of the state root.
-	private AccountState acct = new AccountState(BigInteger.ZERO, BigInteger.valueOf(2).pow(200));
-
+	Logger logger = LoggerFactory.getLogger("main");
 
 	private static byte[] zeroHash256 = new byte[32];
 	private static byte[] zeroHash160 = new byte[20];
@@ -67,12 +64,18 @@ public class Genesis extends Block {
 				NUMBER, MIN_GAS_PRICE, GAS_LIMIT, GAS_USED, TIMESTAMP,
 				EXTRA_DATA, NONCE, null, null);
 
-		// Premine state
+        // The proof-of-concept series include a development premine, making the state root hash
+        // some value stateRoot. The latest documentation should be consulted for the value of the state root.
 		for (String address : premine) {
-			this.updateState(Hex.decode(address), acct.getEncoded());
-		}
+            WorldManager.instance.repository.createAccount(Hex.decode(address));
+            WorldManager.instance.repository.addBalance   (Hex.decode(address), BigInteger.valueOf(2).pow(200) );
+        }
+
+        this.setStateRoot( WorldManager.instance.repository.getRootHash() );
 		logger.info("Genesis-hash: " + Hex.toHexString(this.getHash()));
 		logger.info("Genesis-stateRoot: " + Hex.toHexString(this.getStateRoot()));
+
+        WorldManager.instance.repository.dumpState(0, 0, null);
     }
 	
 	public static Block getInstance() {

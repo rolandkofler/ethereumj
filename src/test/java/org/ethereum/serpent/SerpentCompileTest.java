@@ -1329,13 +1329,23 @@ public class SerpentCompileTest {
         String code =   "\n" +
                 "a = msg(1, 2, 3, [11, 22, 33], 3, 6) \n" +
                 "b = a[0]\n" ;
-        String expected = "0 31 MSTORE8 6 3 MSIZE 32 ADD MSIZE DUP 32 ADD 11 SWAP MSTORE DUP 64 ADD 22 SWAP MSTORE DUP 96 ADD 33 SWAP MSTORE 128 SWAP MSTORE 3 2 1 CALL 32 0 MUL 160 ADD 32 ADD MLOAD 0 MSTORE";
+        String expected = "0 31 MSTORE8 224 MSIZE 224 MSIZE MSTORE 0 192 MSIZE ADD MSTORE8 96 MSIZE 32 ADD MSIZE DUP 32 ADD 11 SWAP MSTORE DUP 64 ADD 22 SWAP MSTORE DUP 96 ADD 33 SWAP MSTORE 128 SWAP MSTORE 3 2 1 CALL 32 0 MUL 160 ADD 32 ADD MLOAD 0 MSTORE";
 
         String asmResult = SerpentCompiler.compile(code);
 
         Assert.assertEquals(expected, asmResult);
     }
 
+    @Test // test create(gas, mem_start , mem_size)
+    public void test51(){
+        String code =   "\n" +
+                "create(100, 0, 32) \n";
+        String expected = "32 0 100 CREATE";
+
+        String asmResult = SerpentCompiler.compile(code);
+
+        Assert.assertEquals(expected, asmResult);
+    }
 
 
 
@@ -1345,7 +1355,6 @@ public class SerpentCompileTest {
 
 # *) a = msg.data
 # 0) sha();
-# 2) create(1, 2, 3, 4)
 # 3) x = sha3(v)
 # 4) x = byte(y,z)
 # 5) v = getch(x,i)

@@ -5,6 +5,7 @@ import java.util.Iterator;
 import java.util.Map;
 
 import org.ethereum.crypto.HashUtil;
+import org.ethereum.db.ByteArrayWrapper;
 import org.ethereum.util.Value;
 import org.iq80.leveldb.DB;
 
@@ -15,13 +16,13 @@ import org.iq80.leveldb.DB;
  */
 public class Cache {
 	
-	private Map<byte[], Node> nodes;
+	private Map<ByteArrayWrapper, Node> nodes;
 	private DB db;
 	private boolean isDirty;
 
 	public Cache(DB db) {
 		this.db = db;
-		nodes = new HashMap<byte[], Node>();
+		nodes = new HashMap<ByteArrayWrapper, Node>();
 	}
 
 	/**
@@ -35,7 +36,7 @@ public class Cache {
 		byte[] enc = value.encode();
 		if (enc.length >= 32) {
 			byte[] sha = HashUtil.sha3(enc);
-			this.nodes.put(sha, new Node(value, true));
+			this.nodes.put(new ByteArrayWrapper(sha), new Node(value, true));
 			this.isDirty = true;
 			return sha;
 		}
@@ -43,34 +44,44 @@ public class Cache {
 	}
 
 	public Value get(byte[] key) {
+		ByteArrayWrapper keyObj = new ByteArrayWrapper(key);
 		// First check if the key is the cache
-		if (this.nodes.get(key) != null) {
-			return this.nodes.get(key).getValue();
+		if (this.nodes.get(keyObj) != null) {
+			return this.nodes.get(keyObj).getValue();
 		}
+
+        if (db != null) return new Value(null);
+
 		// Get the key of the database instead and cache it
 		byte[] data = this.db.get(key);
 		Value value = new Value(data);
 		// Create caching node
-		this.nodes.put(key, new Node(value, false));
+		this.nodes.put(keyObj, new Node(value, false));
 
 		return value;
 	}
 
 	public void delete(byte[] key) {
-		this.nodes.remove(key);
+		ByteArrayWrapper keyObj = new ByteArrayWrapper(key);
+		this.nodes.remove(keyObj);
+
+        if (db == null) return;
 		this.db.delete(key);
 	}
 
 	public void commit() {
+
+        if (db == null) return;
+
 		// Don't try to commit if it isn't dirty
 		if (!this.isDirty) {
 			return;
 		}
 
-		for (byte[] key : this.nodes.keySet()) {
+		for (ByteArrayWrapper key : this.nodes.keySet()) {
 			Node node = this.nodes.get(key);
 			if (node.isDirty()) {
-				this.db.put(key, node.getValue().encode());
+				this.db.put(key.getData(), node.getValue().encode());
 				node.setDirty(false);
 			}
 		}
@@ -79,12 +90,12 @@ public class Cache {
 		// If the nodes grows beyond the 200 entries we simple empty it
 		// FIXME come up with something better
 		if (this.nodes.size() > 200) {
-			this.nodes = new HashMap<byte[], Node>();
+			this.nodes = new HashMap<ByteArrayWrapper, Node>();
 		}
 	}
 
 	public void undo() {
-		Iterator<Map.Entry<byte[], Node>> iter = this.nodes.entrySet().iterator();
+		Iterator<Map.Entry<ByteArrayWrapper, Node>> iter = this.nodes.entrySet().iterator();
 		while (iter.hasNext()) {
 		    if(iter.next().getValue().isDirty()){
 		        iter.remove();
@@ -101,7 +112,7 @@ public class Cache {
 		this.isDirty = isDirty;
 	}
 
-	public Map<byte[], Node> getNodes() {
+	public Map<ByteArrayWrapper, Node> getNodes() {
 		return nodes;
 	}
 

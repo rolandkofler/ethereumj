@@ -122,7 +122,7 @@ public class EthereumProtocolHandler extends ChannelInboundHandlerAdapter {
     public void channelRead(final ChannelHandlerContext ctx, Object msg) throws Exception {
         byte[] payload = (byte[]) msg;
 
-        logger.info("[Send msg: [{}] ]", Hex.toHexString(payload));
+        logger.info("[Recv msg: [{}] ]", Hex.toHexString(payload));
 
         byte command = RLP.getCommandCode(payload);
         // got HELLO
@@ -361,7 +361,7 @@ public class EthereumProtocolHandler extends ChannelInboundHandlerAdapter {
 
         ByteBuf buffer = ctx.alloc().buffer(chainMessage.getPayload().length + 8);
         buffer.writeBytes(StaticMessages.MAGIC_PACKET);
-        buffer.writeBytes(ByteUtil.calcPacketSize(chainMessage.getPayload()));
+        buffer.writeBytes(ByteUtil.calcPacketLength(chainMessage.getPayload()));
         buffer.writeBytes(chainMessage.getPayload());
 
         ctx.writeAndFlush(buffer);

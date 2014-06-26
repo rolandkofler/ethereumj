@@ -2,44 +2,47 @@ package org.ethereum.db;
 
 import java.util.Arrays;
 
+import org.ethereum.util.FastByteComparisons;
+
 /**
  * www.ethereumJ.com
- *
- * @author: Roman Mandeleil
- * Created on: 11/06/2014 15:02
+ * 
+ * @author: Roman Mandeleil Created on: 11/06/2014 15:02
  */
+public class ByteArrayWrapper implements Comparable<ByteArrayWrapper> {
 
-public class ByteArrayWrapper {
+	private final byte[] data;
 
-    private final byte[] data;
+	public ByteArrayWrapper(byte[] data) {
+		if (data == null) {
+			throw new NullPointerException();
+		}
+		this.data = data;
+	}
 
-    public ByteArrayWrapper(byte[] data)
-    {
-        if (data == null)
-        {
-            throw new NullPointerException();
-        }
-        this.data = data;
-    }
+	public boolean equals(Object other) {
+		if (!(other instanceof ByteArrayWrapper)) {
+			return false;
+		}
+		byte[] otherData = ((ByteArrayWrapper) other).getData();
+		return FastByteComparisons.compareTo(
+				data, 0, data.length, 
+				otherData, 0, otherData.length) == 0;
+	}
 
-    @Override
-    public boolean equals(Object other)
-    {
-        if (!(other instanceof ByteArrayWrapper))
-        {
-            return false;
-        }
-        return Arrays.equals(data, ((ByteArrayWrapper)other).data);
-    }
+	@Override
+	public int hashCode() {
+		return Arrays.hashCode(data);
+	}
 
-    @Override
-    public int hashCode()
-    {
-        return Arrays.hashCode(data);
-    }
-
-
-    public byte[] getData() {
-        return data;
-    }
+	@Override
+	public int compareTo(ByteArrayWrapper o) {
+		return FastByteComparisons.compareTo(
+				data, 0, data.length, 
+				o.getData(), 0, o.getData().length);
+	}
+	
+	public byte[] getData() {
+		return data;
+	}
 }

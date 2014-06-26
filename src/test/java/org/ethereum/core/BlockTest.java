@@ -3,7 +3,6 @@ package org.ethereum.core;
 import java.math.BigInteger;
 
 import org.ethereum.manager.WorldManager;
-import org.ethereum.net.message.StaticMessages;
 import org.ethereum.util.ByteUtil;
 import org.spongycastle.util.encoders.Hex;
 import org.ethereum.core.Block;
@@ -137,8 +136,6 @@ public class BlockTest {
          */
     	Block genesis = Genesis.getInstance();
         assertEquals(CPP_PoC5_GENESIS_HEX_RLP_ENCODED, Hex.toHexString(genesis.getEncoded()));
-        
-        // Not really a good test because this compares Genesis.getHash() to itself
         assertEquals(CPP_PoC5_GENESIS_HEX_HASH, Hex.toHexString(genesis.getHash()));
     }
     
@@ -165,21 +162,25 @@ public class BlockTest {
     
     @Test
     public void testCalcDifficulty() {
-    	Block genesis = Genesis.getInstance();
-      	BigInteger difficulty = new BigInteger(1, genesis.calcDifficulty());
-    	System.out.println("Genesis difficulty = " + difficulty.toString());
-    	assertEquals(new BigInteger(1, Genesis.DIFFICULTY), difficulty);
-    	
-    	// Storing genesis because the parent needs to be in the DB for calculation.
-		WorldManager.instance.chainDB.put(ByteUtil.longToBytes(Genesis.NUMBER),
-				genesis.getEncoded());
-    	
-    	Block block1 = new Block(Hex.decode(block_1));
-    	BigInteger calcDifficulty = new BigInteger(1, block1.calcDifficulty());
-    	BigInteger actualDifficulty = new BigInteger(1, block1.getDifficulty());
-    	System.out.println("Block#1 actual difficulty = " + actualDifficulty.toString());
-    	System.out.println("Block#1 calculated difficulty = " + calcDifficulty.toString());
-    	assertEquals(actualDifficulty, calcDifficulty);
+        try {
+            Block genesis = Genesis.getInstance();
+            BigInteger difficulty = new BigInteger(1, genesis.calcDifficulty());
+            System.out.println("Genesis difficulty = " + difficulty.toString());
+            assertEquals(new BigInteger(1, Genesis.DIFFICULTY), difficulty);
+
+            // Storing genesis because the parent needs to be in the DB for calculation.
+            WorldManager.instance.chainDB.put(ByteUtil.longToBytes(Genesis.NUMBER),
+                    genesis.getEncoded());
+
+            Block block1 = new Block(Hex.decode(block_1));
+            BigInteger calcDifficulty = new BigInteger(1, block1.calcDifficulty());
+            BigInteger actualDifficulty = new BigInteger(1, block1.getDifficulty());
+            System.out.println("Block#1 actual difficulty = " + actualDifficulty.toString());
+            System.out.println("Block#1 calculated difficulty = " + calcDifficulty.toString());
+            assertEquals(actualDifficulty, calcDifficulty);
+        } finally {
+            WorldManager.instance.close();
+        }
     }
     
     @Test

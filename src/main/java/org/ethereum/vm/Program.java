@@ -1,9 +1,8 @@
 package org.ethereum.vm;
 
-import org.ethereum.core.AccountState;
-import org.ethereum.core.ContractDetails;
-import org.ethereum.db.TrackDatabase;
-import org.ethereum.trie.TrackTrie;
+import org.ethereum.crypto.HashUtil;
+import org.ethereum.db.ContractDetails;
+import org.ethereum.db.Repository;
 import org.ethereum.util.Utils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,7 +10,8 @@ import org.spongycastle.util.encoders.Hex;
 
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
-import java.util.*;
+import java.util.Arrays;
+import java.util.Stack;
 
 /**
  * www.ethereumJ.com
@@ -25,8 +25,8 @@ public class Program {
     ProgramListener listener;
 
     Stack<DataWord> stack = new Stack<DataWord>();
-    Map<DataWord, DataWord> storage = new HashMap<DataWord, DataWord>();
     ByteBuffer memory = null;
+    byte[] programAddress;
 
     ProgramResult result = new ProgramResult();
 
@@ -41,19 +41,14 @@ public class Program {
 
         gasLogger = LoggerFactory.getLogger("gas - " + invokeData.hashCode());
 
-        result.setStateDb(invokeData.getStateDb());
-        result.setChainDb(invokeData.getChainDb());
-        result.setDetailDB(invokeData.getDetaildDB());
+        result.setRepository(invokeData.getRepository());
 
         if (ops == null) throw new RuntimeException("program can not run with ops: null");
 
         this.invokeData = invokeData;
         this.ops = ops;
 
-
-        if (invokeData.getStorage() != null){
-            storage = invokeData.getStorage();
-        }
+        programAddress = invokeData.getOwnerAddress().getNoLeadZeroesData();
     }
 
     public byte getCurrentOp(){
@@ -71,6 +66,11 @@ public class Program {
 
     public void stackPushZero(){
         DataWord stackWord = new DataWord(0);
+        stack.push(stackWord);
+    }
+
+    public void stackPushOne(){
+        DataWord stackWord = new DataWord(1);
         stack.push(stackWord);
     }
 
@@ -217,6 +217,67 @@ public class Program {
     }
 
 
+    public void createContract(DataWord gas, DataWord memStart, DataWord memSize){
+
+        // 1. FETCH THE CODE FROM THE MEMORY
+        ByteBuffer programCode = memoryChunk(memStart, memSize);
+
+        Repository trackRepository = result.getRepository().getTrack();
+        trackRepository.startTracking();
+
+        byte[] senderAddress = this.getOwnerAddress().getNoLeadZeroesData();
+        if (logger.isInfoEnabled())
+            logger.info("creating a new contract inside contract run: [{}]", Hex.toHexString(senderAddress));
+
+        // 2.1 PERFORM THE GAS VALUE TX
+        // (THIS STAGE IS NOT REVERTED BY ANY EXCEPTION)
+        if (this.getGas().longValue() - gas.longValue() < 0 ){
+
+            logger.info("No gas for the internal CREATE op, \n" +
+                            "contract={}",
+                    Hex.toHexString(senderAddress));
+
+            this.stackPushZero();
+            return;
+        }
+
+        // 2.2 CREATE THE CONTRACT ADDRESS
+        byte[] nonce =  trackRepository.getNonce(senderAddress).toByteArray();
+        byte[] newAddress  = HashUtil.calcNewAddr(this.getOwnerAddress().getNoLeadZeroesData(), nonce);
+        trackRepository.createAccount(newAddress);
+
+        // 2.3 UPDATE THE NONCE
+        // (THIS STAGE IS NOT REVERTED BY ANY EXCEPTION)
+        trackRepository.increaseNonce(senderAddress);
+
+        // 3. COOK THE INVOKE AND EXECUTE
+        ProgramInvoke programInvoke =
+                ProgramInvokeFactory.createProgramInvoke(this, new DataWord(newAddress), DataWord.ZERO,
+                        gas, BigInteger.ZERO, null, trackRepository);
+
+        VM vm = new VM();
+        Program program = new Program(programCode.array(), programInvoke);
+        vm.play(program);
+        ProgramResult result = program.getResult();
+
+        if (result.getException() != null &&
+                result.getException() instanceof Program.OutOfGasException){
+            logger.info("contract run halted by OutOfGas: new contract init ={}" , Hex.toHexString(newAddress));
+
+            trackRepository.rollback();
+            stackPushZero();
+            return;
+        }
+
+        // 4. CREATE THE CONTRACT OUT OF RETURN
+        byte[] code    = result.getHReturn().array();
+        trackRepository.saveCode(newAddress, code);
+
+        // IN SUCCESS PUSH THE ADDRESS INTO THE STACK
+        stackPush(new DataWord(newAddress));
+        trackRepository.commit();
+    }
+
     /**
      * That method implement internal calls
      * and code invocations
@@ -235,25 +296,11 @@ public class Program {
         ByteBuffer data = memoryChunk(inDataOffs, inDataSize);
 
         // FETCH THE SAVED STORAGE
-        ContractDetails details = null;
         byte[] toAddress = toAddressDW.getNoLeadZeroesData();
 
-        byte[] detailsRLPData = invokeData.getDetaildDB().get(toAddress);
-        if (detailsRLPData != null &&  detailsRLPData.length > 0)
-            details = new ContractDetails(detailsRLPData);
 
-        AccountState receiverState;
-        byte[] accountData = result.getStateDb().get(toAddress);
-        if (accountData == null){
-
-            logger.info("no saved address in db to call: address={}" ,Hex.toHexString(toAddress));
-            return;
-        } else{
-
-            receiverState = new AccountState(accountData);
-        }
-
-        byte[] programCode = result.getChainDb().get(receiverState.getCodeHash());
+        // FETCH THE CODE
+        byte[] programCode = this.result.getRepository().getCode(toAddress);
         if (programCode != null && programCode.length != 0){
 
             if (logger.isInfoEnabled())
@@ -261,14 +308,6 @@ public class Program {
                         Hex.toHexString(toAddress));
 
             byte[] senderAddress = this.getOwnerAddress().getNoLeadZeroesData();
-            byte[] senderStateB = this.result.getStateDb().get(senderAddress);
-            if (senderStateB == null){
-                logger.info("This should not happen in any case, this inside contract run is is evidence for contract to exist: \n" +
-                        "address={}", Hex.toHexString(senderAddress));
-                return;
-            }
-
-            AccountState senderState = new AccountState(senderStateB);
 
             // 2.1 PERFORM THE GAS VALUE TX
             // (THIS STAGE IS NOT REVERTED BY ANY EXCEPTION)
@@ -283,29 +322,19 @@ public class Program {
 
             // 2.2 UPDATE THE NONCE
             // (THIS STAGE IS NOT REVERTED BY ANY EXCEPTION)
-            senderState.incrementNonce();
+            this.result.repository.increaseNonce(senderAddress);
 
-            TrackTrie stateDB = new TrackTrie( result.getStateDb() );
-            TrackDatabase chainDB = new TrackDatabase( result.getChainDb() );
-            TrackDatabase detailDB = new TrackDatabase( result.getDetailDB() );
-
-            detailDB.startTrack();
-            chainDB.startTrack();
-            stateDB.startTrack();
+            Repository trackRepository = result.getRepository().getTrack();
+            trackRepository.startTracking();
 
             // todo: check if the endowment can really be done
-            receiverState.addToBalance(endowmentValue.value());
-            stateDB.update(toAddress, receiverState.getEncoded());
-
-            Map<DataWord, DataWord> storage = null;
-            if (details != null)
-                storage = details.getStorage();
+            trackRepository.addBalance(toAddress, endowmentValue.value());
 
             ProgramInvoke programInvoke =
-                    ProgramInvokeFactory.createProgramInvoke(this, toAddressDW, storage,
-                            endowmentValue,  gas, receiverState.getBalance(),
+                    ProgramInvokeFactory.createProgramInvoke(this, toAddressDW,
+                            endowmentValue,  gas, result.getRepository().getBalance(toAddress),
                             data.array(),
-                            detailDB, chainDB, stateDB);
+                            trackRepository);
 
             VM vm = new VM();
             Program program = new Program(programCode, programInvoke);
@@ -316,33 +345,37 @@ public class Program {
                     result.getException() instanceof Program.OutOfGasException){
                 logger.info("contract run halted by OutOfGas: contract={}" , Hex.toHexString(toAddress));
 
-                detailDB.rollbackTrack();
-                chainDB.rollbackTrack();
-                stateDB.rollbackTrack();
+                trackRepository.rollback();
                 stackPushZero();
                 return;
             }
 
-            // todo: apply results: result.gethReturn()
-            // todo: if there is out specified place hReturn on the out
+            // 3. APPLY RESULTS: result.getHReturn() into out_memory allocated
+            ByteBuffer buffer = result.getHReturn();
+            if (buffer != null){
 
+                int retSize = buffer.array().length;
+                int allocSize = outDataSize.intValue();
+                if (retSize > allocSize){
 
-            detailDB.commitTrack();
-            chainDB.commitTrack();
-            stateDB.commitTrack();
+                    byte[] outArray =  Arrays.copyOf(buffer.array(), allocSize );
+                    this.memorySave(outArray, buffer.array());
+                } else{
+                    this.memorySave(outDataOffs.getData(), buffer.array());
+                }
+            }
+
+            // 4. THE FLAG OF SUCCESS IS ONE PUSHED INTO THE STACK
+            stackPushOne();
+
+            trackRepository.commit();
             stackPush(new DataWord(1));
 
             // the gas spent in any internal outcome
+            // even if execution was halted by an exception
             spendGas(result.getGasUsed(), " 'Total for CALL run' ");
             logger.info("The usage of the gas in external call updated", result.getGasUsed());
 
-            // update the storage , it could
-            // change by the call
-            byte[]  contractDetailBytes =
-                result.getDetailDB().get(getOwnerAddress().getNoLeadZeroesData());
-            if (contractDetailBytes != null){
-                this.storage = new ContractDetails(contractDetailBytes).getStorage();
-            }
         }
     }
 
@@ -365,12 +398,7 @@ public class Program {
     public void storageSave(byte[] key, byte[] val){
         DataWord keyWord = new DataWord(key);
         DataWord valWord = new DataWord(val);
-        storage.put(keyWord, valWord);
-
-        if (storage != null){
-            ContractDetails contractDetails = new ContractDetails(storage);
-            result.getDetailDB().put(getOwnerAddress().getNoLeadZeroesData() , contractDetails.getEncoded());
-        }
+        result.repository.addStorageRow(this.programAddress, keyWord, valWord);
     }
 
     public DataWord getOwnerAddress(){
@@ -428,7 +456,7 @@ public class Program {
     }
 
     public DataWord storageLoad(DataWord key){
-        return storage.get(key);
+        return result.repository.getStorageValue(this.programAddress, key);
     }
 
     public DataWord getPrevHash(){
@@ -476,10 +504,12 @@ public class Program {
             }
             if (stackData.length() > 0) stackData.insert(0, "\n");
 
+            ContractDetails contractDetails = this.result.getRepository().getContractDetails(this.programAddress);
             StringBuilder storageData = new StringBuilder();
-            for (DataWord key : storage.keySet()){
+            for (DataWord key : contractDetails.getStorage().keySet()){
 
-                storageData.append(" ").append(key).append(" -> ").append(storage.get(key)).append("\n");
+                storageData.append(" ").append(key).append(" -> ").
+                        append(contractDetails.getStorage().get(key)).append("\n");
             }
             if (storageData.length() > 0) storageData.insert(0, "\n");
 
@@ -536,8 +566,8 @@ public class Program {
             globalOutput.append(" -- MEMORY --  ").append(memoryData).append("\n");
             globalOutput.append(" -- STORAGE -- ").append(storageData).append("\n");
 
-            if (result.gethReturn() != null){
-                globalOutput.append("\n  HReturn: ").append(Hex.toHexString(result.gethReturn().array()));
+            if (result.getHReturn() != null){
+                globalOutput.append("\n  HReturn: ").append(Hex.toHexString(result.getHReturn().array()));
             }
 
             // soffisticated assumption that msg.data != codedata

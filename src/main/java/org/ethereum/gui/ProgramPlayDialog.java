@@ -1,16 +1,11 @@
 package org.ethereum.gui;
 
 import org.ethereum.core.Block;
-import org.ethereum.core.ContractDetails;
 import org.ethereum.core.Transaction;
-import org.ethereum.db.TrackDatabase;
+import org.ethereum.db.Repository;
 import org.ethereum.manager.WorldManager;
-import org.ethereum.trie.TrackTrie;
-import org.ethereum.vm.Program;
-import org.ethereum.vm.ProgramInvokeFactory;
-import org.ethereum.vm.ProgramInvokeImpl;
-import org.ethereum.vm.VM;
-import org.spongycastle.util.encoders.Hex;
+import org.ethereum.serpent.SerpentCompiler;
+import org.ethereum.vm.*;
 
 import javax.swing.*;
 import javax.swing.event.ChangeEvent;
@@ -18,7 +13,7 @@ import javax.swing.event.ChangeListener;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
-import java.util.*;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -36,30 +31,46 @@ public class ProgramPlayDialog extends JPanel implements ActionListener,
 
     private Transaction tx;
 
-    public ProgramPlayDialog(byte[] code, Transaction tx, Block lastBlock, ContractDetails contractDetails) {
+    public ProgramPlayDialog(byte[] code){
+
+        outputList = new ArrayList<String>();
+        VM vm = new VM();
+
+        ProgramInvoke pi = new ProgramInvokeMockImpl();
+
+        Program program = new Program(code ,
+                pi);
+
+        program.addListener(this);
+        program.fullTrace();
+        vm.play(program);
+
+        doGUI();
+    }
+
+
+    public ProgramPlayDialog(byte[] code, Transaction tx, Block lastBlock) {
 
         this.tx = tx;
 
         outputList = new ArrayList<String>();
         VM vm = new VM();
 
-        TrackDatabase trackDetailDB = new TrackDatabase( WorldManager.instance.detaildDB );
-        TrackDatabase trackChainDb  = new TrackDatabase( WorldManager.instance.chainDB);
-        TrackTrie trackStateDB  = new TrackTrie(WorldManager.instance.worldState );
+        Repository tractRepository = WorldManager.instance.repository.getTrack();
 
         Program program = new Program(code ,
-                ProgramInvokeFactory.createProgramInvoke(tx, lastBlock, contractDetails,
-                        trackDetailDB, trackChainDb, trackStateDB));
+                ProgramInvokeFactory.createProgramInvoke(tx, lastBlock, tractRepository));
 
         program.addListener(this);
         program.fullTrace();
         vm.play(program);
 
-        trackDetailDB.rollbackTrack();
-        trackChainDb.rollbackTrack();
-        trackStateDB.rollbackTrack();
+        tractRepository.rollback();
 
+        doGUI();
+    }
 
+    public void doGUI(){
         setLayout(new BoxLayout(this, BoxLayout.PAGE_AXIS));
 
         //Create the slider.
@@ -135,9 +146,14 @@ public class ProgramPlayDialog extends JPanel implements ActionListener,
      * this method should be invoked from the
      * event-dispatching thread.
      */
-    public static void createAndShowGUI(byte[] runCode, Transaction tx, Block lastBlock, ContractDetails details) {
+    public static void createAndShowGUI(byte[] runCode, Transaction tx, Block lastBlock) {
 
-        ProgramPlayDialog ppd = new ProgramPlayDialog(runCode, tx, lastBlock, details);
+        ProgramPlayDialog ppd;
+        if (tx != null)
+            ppd = new ProgramPlayDialog(runCode, tx, lastBlock);
+        else{
+            ppd = new ProgramPlayDialog(runCode);
+        }
 
         //Create and set up the window.
         JFrame frame = new JFrame("Program Draft Play");
@@ -173,13 +189,15 @@ public class ProgramPlayDialog extends JPanel implements ActionListener,
         //Schedule a job for the event-dispatching thread:
         //creating and showing this application's GUI.
 
-/*  todo: make dummy tx for dialog single invokation
+        String asmCode ="11 0 MSTORE 22 32 MSTORE 33 64 MSTORE 44 96 MSTORE 55 128 MSTORE 66 160 MSTORE 192 0 RETURN";
+        final byte[] code = SerpentCompiler.compileAssemblyToMachine(asmCode);
+
+
         SwingUtilities.invokeLater(new Runnable() {
             public void run() {
-                createAndShowGUI();
+                createAndShowGUI(code, null, null);
             }
         });
-*/
 
     }
 }
